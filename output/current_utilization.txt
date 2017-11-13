@@ -1,0 +1,73 @@
+school, utilization
+Waverly ES, 105
+Northfield ES, 91
+Lisbon ES, 85
+Bryant Woods ES, 77
+Manor Woods ES, 81
+Running Brook ES, 73
+Ilchester ES, 106
+Phelps Luck ES, 95
+Dayton Oaks ES, 82
+Atholton ES, 102
+Veterans ES, 108
+Fulton ES, 104
+Talbott Springs ES, 105
+Stevens Forest ES, 101
+Bollman Bridge ES, 85
+Worthington ES, 101
+Clemens Crossing ES, 89
+Rockburn ES, 82
+Hollifield Station ES, 103
+Gorman Crossing ES, 90
+West Friendship ES, 67
+Bushy Park ES, 107
+Centennial Lane ES, 113
+Longfellow ES, 109
+Clarksville ES, 89
+Forest Ridge ES, 94
+Jeffers Hill ES, 108
+Hammond ES, 96
+Swansfield ES, 101
+Deep Run ES, 70
+St Johns Lane ES, 102
+Triadelphia Ridge ES, 95
+Thunder Hill ES, 109
+Waterloo ES, 93
+Cradlerock ES, 115
+Laurel Woods ES, 104
+Elkridge ES, 110
+Pointers Run ES, 91
+Guilford ES, 106
+Bellows Spring ES, 73
+Patapsco MS, 103
+Murray Hill MS, 89
+Oakland Mills MS, 88
+Clarksville MS, 103
+Ellicott Mills MS, 100
+Mayfield Woods MS, 83
+Bonnie Branch MS, 112
+Burleigh Manor MS, 100
+Mount View MS, 98
+Glenwood MS, 101
+Harpers Choice MS, 98
+Elkridge Landing MS, 98
+Folly Quarter MS, 108
+Lime Kiln MS, 86
+Lake Elkhorn MS, 97
+Thomas Viaduct MS, 73
+Patuxent Valley MS, 93
+Dunloggin MS, 107
+Hammond MS, 97
+Wilde Lake MS, 84
+Marriotts Ridge HS, 88
+Centennial HS, 95
+Mt Hebron HS, 99
+Atholton HS, 90
+River Hill HS, 99
+Reservoir HS, 95
+Wilde Lake HS, 95
+Hammond HS, 94
+Glenelg HS, 110
+Oakland Mills HS, 94
+Howard HS, 100
+Long Reach HS, 103

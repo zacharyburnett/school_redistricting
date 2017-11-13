@@ -97,3 +97,20 @@ ENV/
 
 # mypy
 .mypy_cache/
+*.pdf
+*.shp
+*.shx
+*.prj
+*.dbf
+*.mshp
+*.png
+*.qpj
+*.cpg
+*.qgs~
+*.qgs
+*.mxd
+*.sbn
+*.sbx
+*.xml
+*.pptx
+*.ppt
