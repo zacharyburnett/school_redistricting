@@ -55,7 +55,8 @@ schools_filename = r"B:\Workspaces\GIS\GEOG653\final_project\data\schools.shp"
 enrollment_filename = r"B:\Workspaces\GIS\GEOG653\final_project\data\EnrollmentHousing.csv"
 
 # load vector data
-general.runalg("qgis:reprojectlayer", schools_filename, "epsg:4326", os.path.join(output_dir, "schools.shp"))
+if not os.path.exists(os.path.join(output_dir, "schools.shp")):
+    general.runalg("qgis:reprojectlayer", schools_filename, "epsg:4326", os.path.join(output_dir, "schools.shp"))
 schools_layer = QgsVectorLayer(os.path.join(output_dir, "schools.shp"), 'schools', 'ogr')
 general.runalg("qgis:reprojectlayer", attendance_areas_filename, "epsg:4326", os.path.join(output_dir, "attendance_areas.shp"))
 attendance_areas_layer = QgsVectorLayer(os.path.join(output_dir, "attendance_areas.shp"), 'attendance_areas', 'ogr')
@@ -104,6 +105,22 @@ school_utilizations = {}
 current_school_utilizations = {}
 thiessen_layer = {}
 
+manual_changes = {}
+
+manual_changes['elem'] = {}
+#     1180: "Triadelphia Ridge ES",
+#     168: "Manor Woods ES",
+#     171: "Manor Woods ES",
+#     1019: "Running Brook ES",
+#     1147: "Running Brook ES",
+#     2147: "Running Brook ES",
+#     2077: "Bellows Spring ES",
+#     1298: "Bellows Spring ES"
+# }
+
+manual_changes['midd'] = {}
+manual_changes['high'] = {}
+
 for school_level in school_levels:
     bar_counter = bar_counter + 1
     bar.update(bar_counter)
@@ -133,6 +150,7 @@ for school_level in school_levels:
         general.runalg("qgis:selectbyattribute", schools_layer, "Level", 7, school_level)
         general.runalg("saga:thiessenpolygons", schools_layer, 0.2, voronoi_temp_filename)
         general.runalg("qgis:clip",voronoi_temp_filename, os.path.join(output_dir, "attendance_areas.shp"), voronoi_filename)
+        os.remove(voronoi_temp_filename)
     voronoi_layer = QgsVectorLayer(voronoi_filename, 'voronoi_%s_school' % (school_level), 'ogr')
 
     bar_counter = bar_counter + 1
@@ -363,62 +381,82 @@ for school_level in school_levels:
         bar.update(bar_counter)
         voronoi_polygons = {}
          
-        for voronoi_polygon in voronoi_layer.getFeatures():
-            voronoi_polygons[voronoi_polygon] = school_utilizations_prj[voronoi_polygon['Name']]
-             
         # iterate through schools by current utilization in ascending order (lowest first) 
-        for voronoi_polygon, _ in sorted(voronoi_polygons.iteritems(), key = lambda (k,v): (v,k)):
-            school_name = voronoi_polygon['Name']
+        for school_name, _ in sorted(school_utilizations[school_level].iteritems(), key = lambda (k,v): (v,k), reverse = True):
             school = schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" != '%s'" % (school_name)))).next()
             school_utilization = school_utilizations_prj[school_name]
             # check if utilization is outside target
-            if school_utilization < target_min_utilization or school_utilization > target_max_utilization :
+            if school_utilization < target_min_utilization or school_utilization > target_max_utilization:
                 #print "Correcting %s (%d%%)" % (school_name, school_utilization)
-                # construct dictionary for sorting neighboring schools by utilization
-                neighboring_schools = {}
-                for other_voronoi_polygon in voronoi_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" != '%s'" % (school_name)))):
-                    if voronoi_polygon.geometry().touches(other_voronoi_polygon.geometry()):
-                        neighboring_schools[other_voronoi_polygon['Name']] = school_utilizations[school_level][other_voronoi_polygon['Name']]
+                
+                owned_attendance_areas = []
+                unowned_attendance_areas = []
+                for plan_id, area_data in attendance_areas_prj.iteritems():
+                    if area_data['assigned_school'] == school_name:
+                        owned_attendance_areas.append(area_data['attendance_area'])
+                    else:
+                        unowned_attendance_areas.append(area_data['attendance_area'])
+
+                # find schools adjacent to current school
+                adjacent_schools = {}
+                for owned_attendance_area in owned_attendance_areas:
+                    for unowned_attendance_area in unowned_attendance_areas:
+                        if owned_attendance_area.geometry().touches(unowned_attendance_area.geometry()):
+                            adjacent_schools[unowned_attendance_area[school_level]] = school_utilizations[school_level][unowned_attendance_area[school_level]]
+
+                
+#                 # construct dictionary for sorting neighboring schools by utilization
+#                 neighboring_schools = {}
+#                 for other_voronoi_polygon in voronoi_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" != '%s'" % (school_name)))):
+#                     if voronoi_polygon.geometry().touches(other_voronoi_polygon.geometry()):
+#                         neighboring_schools[other_voronoi_polygon['Name']] = school_utilizations[school_level][other_voronoi_polygon['Name']]
                  
                 if school_utilization > target_max_utilization:
                     #schools_above_target[school_name] = school_utilizations[school_level][school_name]
                     #print "%d%% above target (%s)" % (school_utilization, school_name)
                     attendance_areas_to_give = {}
-                    for plan_id, area_data in attendance_areas_prj.iteritems():
-                        attendance_area = area_data['attendance_area']
-                        assigned_school = area_data['assigned_school']
-                        
-                        if assigned_school == school_name and plan_id not in home_areas.values():
-                            attendance_areas_to_give[attendance_area['PLAN_ID']] = distance_area.measureLine(school.geometry().asPoint(), attendance_area.geometry().centroid().asPoint())
-                            #attendance_areas_to_give[attendance_area['PLAN_ID']] = attendance_area_populations[school_level][attendance_area['PLAN_ID']]
+                    for owned_attendance_area in owned_attendance_areas:
+                        attendance_areas_to_give[owned_attendance_area] = distance_area.measureLine(school.geometry().asPoint(), owned_attendance_area.geometry().centroid().asPoint())
+                        #attendance_areas_to_give[attendance_area['PLAN_ID']] = attendance_area_populations[school_level][attendance_area['PLAN_ID']]
                                  
                     # iterate through neighboring schools by utilization in ascending order (lowest first)
-                    for other_school_name, _ in sorted(neighboring_schools.iteritems(), key = lambda (k,v): (v,k)):
+                    for other_school_name, _ in sorted(adjacent_schools.iteritems(), key = lambda (k,v): (v,k)):
+                        other_owned_attendance_areas = []
+                        for plan_id, area_data in attendance_areas_prj.iteritems():
+                            if area_data['assigned_school'] == other_school_name:
+                                other_owned_attendance_areas.append(area_data['attendance_area'])
                         in_target = False
                         # iterate through shared attendance areas by distance in descending order (farthest first)
-                        for plan_id, distance in sorted(attendance_areas_to_give.iteritems(), key = lambda (k,v): (v,k), reverse = True):
-                            population = attendance_area_populations[school_level][plan_id]
-                            assigned_school = attendance_areas_prj[plan_id]['assigned_school']
-                             
-                            # check if current attendance area belongs to the current school 
-                            if assigned_school == school_name:
-                                new_population = school_populations_prj[school_name] - population
-                                other_new_population = school_populations_prj[other_school_name] + population
-                                new_utilization = float(new_population) * 100 / school_capacities[school_level][school_name]
-                                other_new_utilization = float(other_new_population) * 100 / school_capacities[school_level][other_school_name]
+                        for attendance_area, distance in sorted(attendance_areas_to_give.iteritems(), key = lambda (k,v): (v,k), reverse = True):
+                            touching_other_school = False
+                            for other_attendance_area in other_owned_attendance_areas:
+                                if attendance_area.geometry().touches(other_attendance_area.geometry()):
+                                    touching_other_school = True
+                                    break
+                            
+                            if touching_other_school:
+                                population = attendance_area_populations[school_level][plan_id]
+                                assigned_school = attendance_areas_prj[plan_id]['assigned_school']
                                  
-                                if True:#new_utilization >= other_new_utilization:#new_utilization <= target_max_utilization:
-                                    #print "Planning to update %d (pop %d) from %s (%d%% -> %d%%) to %s (%d%% -> %d%%)" % (plan_id, population, school_name, school_utilizations_prj[school_name], new_utilization, other_school_name, school_utilizations_prj[other_school_name], other_new_utilization)
-                                    school_populations_prj[school_name] = new_population
-                                    school_populations_prj[other_school_name] = other_new_population
-                                    school_utilizations_prj[school_name] = new_utilization
-                                    school_utilizations_prj[other_school_name] = other_new_utilization
-                                    attendance_areas_to_update[plan_id] = other_school_name
-                                    attendance_areas_prj[plan_id]['assigned_school'] = other_school_name
+                                # check if current attendance area belongs to the current school 
+                                if assigned_school == school_name:
+                                    new_population = school_populations_prj[school_name] - population
+                                    other_new_population = school_populations_prj[other_school_name] + population
+                                    new_utilization = float(new_population) * 100 / school_capacities[school_level][school_name]
+                                    other_new_utilization = float(other_new_population) * 100 / school_capacities[school_level][other_school_name]
                                      
-                                    if school_utilizations_prj[school_name] <= target_max_utilization:
-                                        in_target = True
-                                        break
+                                    if True:#other_new_utilization <= target_max_utilization:
+                                        #print "Planning to update %d (pop %d) from %s (%d%% -> %d%%) to %s (%d%% -> %d%%)" % (plan_id, population, school_name, school_utilizations_prj[school_name], new_utilization, other_school_name, school_utilizations_prj[other_school_name], other_new_utilization)
+                                        school_populations_prj[school_name] = new_population
+                                        school_populations_prj[other_school_name] = other_new_population
+                                        school_utilizations_prj[school_name] = new_utilization
+                                        school_utilizations_prj[other_school_name] = other_new_utilization
+                                        attendance_areas_to_update[plan_id] = other_school_name
+                                        attendance_areas_prj[plan_id]['assigned_school'] = other_school_name
+                                         
+                                        if school_utilizations_prj[school_name] <= target_max_utilization:
+                                            in_target = True
+                                            break
                         if in_target:
                             #print 'done with %s' % (school_name)
                             break
@@ -426,19 +464,14 @@ for school_level in school_levels:
                     #schools_below_target[school_name] = school_utilizations[school_level][school_name]
                     #print "%d%% below target (%s)" % (school_utilization, school_name)
                     attendance_areas_to_take = {}
-                    for plan_id, area_data in attendance_areas_prj.iteritems():
-                        attendance_area = area_data['attendance_area']
-                        assigned_school = area_data['assigned_school']
-                         
-                        if assigned_school != school_name:
-                            for plan_id, other_area_data in attendance_areas_prj.iteritems():
-                                if other_area_data['assigned_school'] == school_name:
-                                    if attendance_area.geometry().touches(other_area_data['attendance_area'].geometry()):
-                                        #attendance_areas_to_take[attendance_area['PLAN_ID']] = attendance_area_populations[school_level][attendance_area['PLAN_ID']]
-                                        attendance_areas_to_take[attendance_area['PLAN_ID']] = distance_area.measureLine(school.geometry().asPoint(), attendance_area.geometry().centroid().asPoint())
-                                        break
+                    for owned_attendance_area in owned_attendance_areas:
+                        for unowned_attendance_area in unowned_attendance_areas:
+                            if unowned_attendance_area.geometry().touches(owned_attendance_area.geometry()):
+                                #attendance_areas_to_take[attendance_area['PLAN_ID']] = attendance_area_populations[school_level][attendance_area['PLAN_ID']]
+                                attendance_areas_to_take[unowned_attendance_area['PLAN_ID']] = distance_area.measureLine(school.geometry().asPoint(), unowned_attendance_area.geometry().centroid().asPoint())
+                                break
                              
-                    # iterate through neighboring schools by utilization in descending order (highest first))                    for other_school_name, _ in sorted(neighboring_schools.iteritems(), key = lambda (k,v): (v,k), reverse = True):
+                    # iterate through neighboring schools by utilization in descending order (highest first))                    for other_school_name, _ in sorted(adjacent_schools.iteritems(), key = lambda (k,v): (v,k), reverse = True):
                         in_target = False
                         # iterate through shared attendance areas by distance in ascending order (closest first)
                         for plan_id, distance in sorted(attendance_areas_to_take.iteritems(), key = lambda (k,v): (v,k)):
@@ -467,7 +500,10 @@ for school_level in school_levels:
                         if in_target:
                             #print 'done with %s' % (school_name)
                             break
-         
+            
+    for plan_id, school_name in manual_changes[school_level].iteritems():
+        attendance_areas_to_update[plan_id] = school_name
+    
     attendance_areas_layer.startEditing()
          
     for attendance_area in attendance_areas_layer.getFeatures():
@@ -479,6 +515,12 @@ for school_level in school_levels:
      
     school_utilizations[school_level] = school_utilizations_prj
     school_populations[school_level] = school_populations_prj
+    
+    # find school utilizations by capacity
+    for school_name in school_names:
+        school_population = sum([attendance_area_populations[school_level][attendance_area['PLAN_ID']] for attendance_area in attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" = '%s'" % (school_level, school_name))))])
+        school_populations[school_level][school_name] = school_population
+        school_utilizations[school_level][school_name] = school_population * 100 / school_capacities[school_level][school_name]
  
 print '\n'
  
@@ -490,9 +532,9 @@ avg_utilization = [sum([utilization for school_name, utilization in school_utili
 for school_level in school_levels:
     index = school_levels.index(school_level)
     #print "\n%d%% -> %d%% average utilization in %s school districts" % (current_avg_utilization[index] / [41, 20, 12][index], avg_utilization[index] / [41, 20, 12][index], school_level)
-    for school_name in school_utilizations[school_level].keys():
+    for school_name, school_utilization in sorted(school_utilizations[school_level].iteritems(), key = lambda (k,v): (v,k), reverse = True):
         #print "%d%% -> %d%% %s" % (current_school_utilizations[school_level][school_name], school_utilizations[school_level][school_name], school_name)
-        print "%s, %d" % (school_name, school_utilizations[school_level][school_name])
+        print "%s, %d" % (school_name, school_utilization)
 
 #_writer = QgsVectorFileWriter.writeAsVectorFormat(attendance_areas_layer, os.path.join(output_dir, 'attendance_areas.shp'), "utf-8", QgsCoordinateReferenceSystem('epsg:4326'))
 #_writer = QgsVectorFileWriter.writeAsVectorFormat(thiessen_layer, os.path.join(output_dir, 'attendance_areas_thiessen.shp'), "utf-8", QgsCoordinateReferenceSystem('epsg:4326'))
