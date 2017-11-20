@@ -5,6 +5,7 @@ Created on Nov 6, 2017
 '''
 
 import os
+from time import sleep
 import pandas
 import progressbar
 
@@ -19,7 +20,7 @@ from PyQt4.QtCore import QVariant
 
 # initialize QGIS application providers
 qgs = QgsApplication([], True)
-qgs.setPrefixPath('A:/OSGeo4W64/apps/qgis', True)
+qgs.setPrefixPath(r'A:\OSGeo4W64\apps\qgis', True)
 qgs.initQgis()
 
 # import processing toolbox
@@ -42,7 +43,7 @@ num_iterations = 1
 school_levels = ['elem', 'midd', 'high']
 
 # define output directory
-output_dir = "B:/Workspaces/GIS/GEOG653/final_project/output/"
+output_dir = r"B:\Workspaces\GIS\GEOG653\final_project\output"
 
 # define filenames
 attendance_areas_filename = r"B:\Workspaces\GIS\GEOG653\final_project\data\MPIA\FS17_COMpolys.shp"
@@ -52,12 +53,16 @@ school_capacities_filenames = {
     'high': r"B:\Workspaces\GIS\GEOG653\final_project\data\capacities_high.csv"
     }
 schools_filename = r"B:\Workspaces\GIS\GEOG653\final_project\data\schools.shp"
-enrollment_filename = r"B:\Workspaces\GIS\GEOG653\final_project\data\EnrollmentHousing.csv"
+enrollment_filename = r"B:\Workspaces\GIS\GEOG653\final_project\data\PPPROJ17-EnrollmentHousing.xlsx"
 
 # load vector data
 if not os.path.exists(os.path.join(output_dir, "schools.shp")):
     general.runalg("qgis:reprojectlayer", schools_filename, "epsg:4326", os.path.join(output_dir, "schools.shp"))
-schools_layer = QgsVectorLayer(os.path.join(output_dir, "schools.shp"), 'schools', 'ogr')
+general.runalg("qgis:splitvectorlayer", QgsVectorLayer(os.path.join(output_dir, "schools.shp"), 'schools', 'ogr'), "Level", output_dir)
+schools_layers = {}
+for school_level in school_levels:
+    schools_layers[school_level] = QgsVectorLayer(os.path.join(output_dir, "schools.shp_Level_%s.shp" % (school_level)), 'schools_%s' % (school_level), 'ogr')
+
 general.runalg("qgis:reprojectlayer", attendance_areas_filename, "epsg:4326", os.path.join(output_dir, "attendance_areas.shp"))
 attendance_areas_layer = QgsVectorLayer(os.path.join(output_dir, "attendance_areas.shp"), 'attendance_areas', 'ogr')
 
@@ -65,11 +70,11 @@ bar = progressbar.ProgressBar(max_value=len(school_levels) * (num_iterations + 3
 bar_counter = 0
 bar.update(bar_counter)
 
-enrollment_dataframe = pandas.read_csv(enrollment_filename)
+enrollment_dataframe = pandas.read_excel(enrollment_filename, sheet_name = 'PPPROJ17', header = 1, skiprows = 0)
 enrollment_population_fields = {
-    'elem': ['GR0_POP', 'GR1_POP', 'GR2_POP', 'GR3_POP', 'GR4_POP', 'GR5_POP'],
-    'midd': ['GR6_POP', 'GR7_POP', 'GR8_POP'],
-    'high': ['GR9_POP', 'GR10_POP', 'GR11_POP', 'GR12_POP']
+    'elem': ['GR0_POP', 'GR1_POP', 'GR2_POP', 'GR3_POP', 'GR4_POP', 'GR5_POP'],#['GR0_POP', 'ESPROJ0'],
+    'midd': ['GR6_POP', 'GR7_POP', 'GR8_POP'],#['MSPROJ0'],
+    'high': ['GR9_POP', 'GR10_POP', 'GR11_POP', 'GR12_POP']#['HSPROJ0']
     }
 
 attendance_area_populations = {}
@@ -108,14 +113,12 @@ thiessen_layer = {}
 manual_changes = {}
 
 manual_changes['elem'] = {}
-#     1180: "Triadelphia Ridge ES",
-#     168: "Manor Woods ES",
-#     171: "Manor Woods ES",
-#     1019: "Running Brook ES",
-#     1147: "Running Brook ES",
-#     2147: "Running Brook ES",
+#     294: "Bushy Park ES",
+#     85: "Ilchester ES",
+#     1298: "Bellows Spring ES",
 #     2077: "Bellows Spring ES",
-#     1298: "Bellows Spring ES"
+#     80: "Bellows Spring ES",
+#     1080: "Bellows Spring ES"
 # }
 
 manual_changes['midd'] = {}
@@ -131,8 +134,9 @@ for school_level in school_levels:
         school_level_key = 'MS_HOME'
     elif school_level == 'high':
         school_level_key = 'HS_HOME'
-        
-    schools = schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" LIKE '%%%s%%'" % (school_level_key[0:2]))))
+    
+    schools_layer = schools_layers[school_level]
+    schools = schools_layer.getFeatures()
     school_names = [school['Name'] for school in schools]
            
     # find current school utilizations by capacity
@@ -144,14 +148,13 @@ for school_level in school_levels:
         current_school_utilizations[school_level][school_name] = school_population * 100 / school_capacities[school_level][school_name]
      
     # calculate Voronoi (Thiessen) polygons
-    voronoi_filename = os.path.join(output_dir, 'voronoi_%s_school.shp' % (school_level))
+    voronoi_filename = os.path.join(output_dir, 'voronoi_%s.shp' % (school_level))
+    
     if not os.path.exists(voronoi_filename):
-        voronoi_temp_filename = os.path.join(output_dir, 'voronoi_%s_school_temp.shp' % (school_level))
-        general.runalg("qgis:selectbyattribute", schools_layer, "Level", 7, school_level)
+        voronoi_temp_filename = os.path.join(output_dir, 'voronoi_%s_temp.shp' % (school_level))
         general.runalg("saga:thiessenpolygons", schools_layer, 0.2, voronoi_temp_filename)
-        general.runalg("qgis:clip",voronoi_temp_filename, os.path.join(output_dir, "attendance_areas.shp"), voronoi_filename)
-        os.remove(voronoi_temp_filename)
-    voronoi_layer = QgsVectorLayer(voronoi_filename, 'voronoi_%s_school' % (school_level), 'ogr')
+        general.runalg("qgis:clip", voronoi_temp_filename, os.path.join(output_dir, "attendance_areas.shp"), voronoi_filename)
+    voronoi_layer = QgsVectorLayer(voronoi_filename, 'voronoi_%s' % (school_level), 'ogr')
 
     bar_counter = bar_counter + 1
     bar.update(bar_counter)
@@ -173,7 +176,7 @@ for school_level in school_levels:
     
     home_areas = {}
     
-    for school in schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" LIKE '%%%s%%'" % (school_level_key[0:2])))):
+    for school in schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Level\" = '%s'" % (school_level)))):
         for attendance_area in attendance_areas_layer.getFeatures():
             if school.geometry().within(attendance_area.geometry()):
                 home_areas[school['Name']] = attendance_area['PLAN_ID']
@@ -244,7 +247,7 @@ for school_level in school_levels:
                     null_attendance_areas.append(attendance_area)
 
                     if new_utilization <= target_max_utilization:
-                        print "---------------------- finished with %s" % (school_name)
+                        #print "---------------------- finished with %s" % (school_name)
                         break
    
     # iterate through schools by current utilization in ascending order (lowest first) 
@@ -277,7 +280,7 @@ for school_level in school_levels:
                     null_attendance_areas.remove(attendance_area)
                                      
                     if new_utilization >= target_min_utilization:
-                        print "---------------------- finished with %s" % (school_name)
+                        #print "---------------------- finished with %s" % (school_name)
                         break
                     
     # iterate through schools by current utilization in ascending order (lowest first) 
@@ -526,20 +529,24 @@ print '\n'
  
 print "iterations: %d" % (num_iterations)
  
-current_avg_utilization = [sum([utilization for school_name, utilization in current_school_utilizations[school_level].iteritems()]) for school_level in school_levels]
-avg_utilization = [sum([utilization for school_name, utilization in school_utilizations[school_level].iteritems()]) for school_level in school_levels]
+#current_avg_utilization = [sum([utilization for school_name, utilization in current_school_utilizations[school_level].iteritems()]) for school_level in school_levels]
+#avg_utilization = [sum([utilization for school_name, utilization in school_utilizations[school_level].iteritems()]) for school_level in school_levels]
  
 for school_level in school_levels:
-    index = school_levels.index(school_level)
+    #index = school_levels.index(school_level)
     #print "\n%d%% -> %d%% average utilization in %s school districts" % (current_avg_utilization[index] / [41, 20, 12][index], avg_utilization[index] / [41, 20, 12][index], school_level)
     for school_name, school_utilization in sorted(school_utilizations[school_level].iteritems(), key = lambda (k,v): (v,k), reverse = True):
         #print "%d%% -> %d%% %s" % (current_school_utilizations[school_level][school_name], school_utilizations[school_level][school_name], school_name)
-        print "%s, %d" % (school_name, school_utilization)
+        print "%s, %d, %d, %d, %d, %d" % (school_name, current_school_populations[school_level][school_name], school_populations[school_level][school_name], school_capacities[school_level][school_name], current_school_utilizations[school_level][school_name], school_utilization)
 
 #_writer = QgsVectorFileWriter.writeAsVectorFormat(attendance_areas_layer, os.path.join(output_dir, 'attendance_areas.shp'), "utf-8", QgsCoordinateReferenceSystem('epsg:4326'))
 #_writer = QgsVectorFileWriter.writeAsVectorFormat(thiessen_layer, os.path.join(output_dir, 'attendance_areas_thiessen.shp'), "utf-8", QgsCoordinateReferenceSystem('epsg:4326'))
 
 # close QGIS application providers
 qgs.exitQgis()
+
+for school_level in school_levels:
+    #os.remove(os.path.join(output_dir, 'voronoi_%s_temp.shp' % (school_level)))
+    os.remove(os.path.join(output_dir, 'schools.shp_Level_%s.shp' % (school_level)))
 
 print "done"
