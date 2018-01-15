@@ -207,7 +207,7 @@ for school_level in school_levels:
     # find all attendance areas without a school assignment
     null_attendance_areas = [attendance_area for attendance_area in attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" IS NULL" % (school_level))))]
     
-    # iterate through schools by current utilization in descending order (highest first) 
+    # iterate through schools by current utilization in descending order (highest first)
     for school_name, school_utilization in sorted(school_utilizations[school_level].iteritems(), key = lambda (k,v): (v,k), reverse = True):
         if school_utilization > target_max_utilization:
             school = schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" = '%s'" % (school_name)))).next()
