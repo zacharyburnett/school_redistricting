@@ -2,9 +2,12 @@
 Created on Nov 6, 2017
 
 Given input data (attendance area polygons, school capacities, school points, and attendance area enrollment) for each school level, 
-this script will attempt to assign attendance areas in a balanced manner. The main loop is split into two phases: initial assignment, and rebalancing. 
+this script will attempt to assign attendance areas in a balanced manner. 
 
-The current iteration of this script (with only one iteration) does not create islands but also does not completely balance school capacities or always fall within target limits.
+The main loop is split into two phases: initial assignment and rebalancing. 
+
+The current iteration of this script (with only one iteration) does not create islands, 
+but also does not completely balance school capacities or always fall within target limits.
 
 @author: Zach
 '''
