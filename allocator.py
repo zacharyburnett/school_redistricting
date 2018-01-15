@@ -1,34 +1,33 @@
 '''
 Created on Nov 6, 2017
 
+Given input data (attendance area polygons, school capacities, school points, and attendance area enrollment) for each school level, 
+this script will attempt to assign attendance areas in a balanced manner. The main loop is split into two phases: initial assignment, and rebalancing. 
+
+The current iteration of this script (with only one iteration) does not create islands but also does not completely balance school capacities or always fall within target limits.
+
 @author: Zach
 '''
 
 import os
-from time import sleep
 import pandas
 import progressbar
 
 # import from /apps/qgis/python/
-from qgis.core import QgsApplication, QgsVectorLayer, QgsFeatureRequest, QgsExpression, QgsVectorFileWriter
-from qgis.core import QgsField, QgsPoint, QgsDistanceArea, QgsCoordinateReferenceSystem, NULL
-#import qgis.utils
-#from osgeo import ogr
+from qgis.core import QgsApplication, QgsVectorLayer, QgsFeatureRequest, QgsExpression, QgsField, QgsDistanceArea, QgsCoordinateReferenceSystem, NULL
 from PyQt4.QtCore import QVariant
-#from PyQt4.QtGui import *
-#from qgis.gui import *
 
 # initialize QGIS application providers
 qgs = QgsApplication([], True)
 qgs.setPrefixPath(r'A:\OSGeo4W64\apps\qgis', True)
 qgs.initQgis()
 
-# import processing toolbox
+# import QGIS processing toolbox
 from processing.core.Processing import Processing
 Processing.initialize()
 from processing.tools import general
 
-#Create a measure object
+# create a QGIS measure object
 distance_area = QgsDistanceArea()
 crs = QgsCoordinateReferenceSystem()
 crs.createFromSrsId(3452) # EPSG:4326
@@ -36,7 +35,7 @@ distance_area.setSourceCrs(crs)
 distance_area.setEllipsoidalMode(True)
 distance_area.setEllipsoid('WGS84')
 
-# define number of iterations to complete
+# define number of iterations of rebalancing phase (more iterations makes more islands)
 num_iterations = 1
 
 # define school levels
@@ -63,13 +62,16 @@ schools_layers = {}
 for school_level in school_levels:
     schools_layers[school_level] = QgsVectorLayer(os.path.join(output_dir, "schools.shp_Level_%s.shp" % (school_level)), 'schools_%s' % (school_level), 'ogr')
 
+# reproject layerto EPSG 4326 for processing
 general.runalg("qgis:reprojectlayer", attendance_areas_filename, "epsg:4326", os.path.join(output_dir, "attendance_areas.shp"))
 attendance_areas_layer = QgsVectorLayer(os.path.join(output_dir, "attendance_areas.shp"), 'attendance_areas', 'ogr')
 
+# create progress bar
 bar = progressbar.ProgressBar(max_value=len(school_levels) * (num_iterations + 3))
 bar_counter = 0
 bar.update(bar_counter)
 
+# get population fields per grade level
 enrollment_dataframe = pandas.read_excel(enrollment_filename, sheet_name = 'PPPROJ17', header = 1, skiprows = 0)
 enrollment_population_fields = {
     'elem': ['GR0_POP', 'GR1_POP', 'GR2_POP', 'GR3_POP', 'GR4_POP', 'GR5_POP'],#['GR0_POP', 'ESPROJ0'],
@@ -79,39 +81,32 @@ enrollment_population_fields = {
 
 attendance_area_populations = {}
 
+# get sum of populations per school level
 for school_level in school_levels:
     attendance_area_populations[school_level] = dict(zip(enrollment_dataframe['PLAN_ID'], sum([enrollment_dataframe[population_field] for population_field in enrollment_population_fields[school_level]])))
 
-# populations = {}
-# 
-# for plan_id in [attendance_area['PLAN_ID'] for attendance_area in attendance_areas_layer.getFeatures()]:
-#     populations[plan_id] = {}
-# 
-# for school_level, area_populations in attendance_area_populations.iteritems():
-#     for plan_id, population in area_populations.iteritems():
-#         populations[plan_id][school_level] = population
-# 
-# for plan_id, school_levels in populations.iteritems():
-#     print "%s,%s" % (plan_id, ",".join(str(x) for x in school_levels.values()))
-
+# read school capacities
 school_capacities = {}
 
 for school_level in school_levels:
     school_capacities_dataframe = pandas.read_csv(school_capacities_filenames[school_level])
     school_capacities[school_level] = dict(zip(school_capacities_dataframe['school'], school_capacities_dataframe['capacity']))
     
+# define target minimum and maximum utilization per school
 target_min_utilization = 90
 target_max_utilization = 110
 
+# create dictionaries for populations
 school_populations = {}
 current_school_populations = {}
 
+# create dictionaries for utilizations and thiessen polygons
 school_utilizations = {}
 current_school_utilizations = {}
 thiessen_layer = {}
 
+# create dictionary for any manual attendance area assignments
 manual_changes = {}
-
 manual_changes['elem'] = {}
 #     294: "Bushy Park ES",
 #     85: "Ilchester ES",
@@ -120,11 +115,12 @@ manual_changes['elem'] = {}
 #     80: "Bellows Spring ES",
 #     1080: "Bellows Spring ES"
 # }
-
 manual_changes['midd'] = {}
 manual_changes['high'] = {}
 
+# iterate over school levels (main loop)
 for school_level in school_levels:
+    # update progress bar
     bar_counter = bar_counter + 1
     bar.update(bar_counter)
            
@@ -147,15 +143,15 @@ for school_level in school_levels:
         current_school_populations[school_level][school_name] = school_population
         current_school_utilizations[school_level][school_name] = school_population * 100 / school_capacities[school_level][school_name]
      
-    # calculate Voronoi (Thiessen) polygons
+    # calculate Voronoi (Thiessen) polygons if it does not exist
     voronoi_filename = os.path.join(output_dir, 'voronoi_%s.shp' % (school_level))
-    
     if not os.path.exists(voronoi_filename):
         voronoi_temp_filename = os.path.join(output_dir, 'voronoi_%s_temp.shp' % (school_level))
         general.runalg("saga:thiessenpolygons", schools_layer, 0.2, voronoi_temp_filename)
         general.runalg("qgis:clip", voronoi_temp_filename, os.path.join(output_dir, "attendance_areas.shp"), voronoi_filename)
     voronoi_layer = QgsVectorLayer(voronoi_filename, 'voronoi_%s' % (school_level), 'ogr')
 
+    # update progress bar
     bar_counter = bar_counter + 1
     bar.update(bar_counter)
     
@@ -164,6 +160,7 @@ for school_level in school_levels:
         attendance_areas_layer.dataProvider().addAttributes([QgsField(school_level, QVariant.String)])
         attendance_areas_layer.updateFields()
         
+    # start applying changes
     attendance_areas_layer.startEditing()
     
     # find attendance areas within voronoi polygons
@@ -174,6 +171,7 @@ for school_level in school_levels:
                 attendance_areas_layer.updateFeature(attendance_area)
                 break
     
+    # define and populate attendance areas where schools physically reside (do not give away home area)
     home_areas = {}
     
     for school in schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Level\" = '%s'" % (school_level)))):
@@ -183,21 +181,10 @@ for school_level in school_levels:
                 attendance_area[school_level] = school['Name']
                 attendance_areas_layer.updateFeature(attendance_area)
     
-#     # find attendance areas intersecting voronoi polygons and assign them to their highest area intersection
-#     intersecting_voronoi = {}
-#     for attendance_area in attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" IS NULL" % (school_level)))):
-#         intersecting_voronoi[attendance_area['PLAN_ID']] = {}
-#         for voronoi_polygon in voronoi_layer.getFeatures():
-#             school_name = voronoi_polygon['Name']
-#             if attendance_area.geometry().intersects(voronoi_polygon.geometry()):
-#                 intersecting_voronoi[attendance_area['PLAN_ID']][school_name] = attendance_area.geometry().intersection(voronoi_polygon.geometry()).area()
-#                 #intersecting_voronoi[attendance_area['PLAN_ID']][school_name] = attendance_area_populations[school_level][attendance_area['PLAN_ID']]
-#                 if attendance_area[school_level] == NULL or (intersecting_voronoi[attendance_area['PLAN_ID']][school_name] > intersecting_voronoi[attendance_area['PLAN_ID']][attendance_area[school_level]]):
-#                     attendance_area[school_level] = school_name
-#                     attendance_areas_layer.updateFeature(attendance_area)
-
+    # commit applied changes
     attendance_areas_layer.commitChanges()
     
+    # update progress bar
     bar_counter = bar_counter + 1
     bar.update(bar_counter)
              
@@ -209,8 +196,12 @@ for school_level in school_levels:
         school_populations[school_level][school_name] = school_population
         school_utilizations[school_level][school_name] = school_population * 100 / school_capacities[school_level][school_name]
     
+    # ----------------------------------------------------- initial assignment phase ------------------------------------------------------------
+    
+    # create dictionary to hold changes to apply
     attendance_areas_to_update = {}
     
+    # find all attendance areas without a school assignment
     null_attendance_areas = [attendance_area for attendance_area in attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" IS NULL" % (school_level))))]
     
     # iterate through schools by current utilization in descending order (highest first) 
@@ -219,6 +210,7 @@ for school_level in school_levels:
             school = schools_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"Name\" = '%s'" % (school_name)))).next()
             #print "%s above at %d%%" % (school_name, school_utilization)
             
+            # get attendance areas assigned and not assigned to the current school, as well as those bordering its current area
             owned_attendance_areas = attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" = '%s'" % (school_level, school_name))))
             unowned_attendance_areas = attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" != '%s' OR \"%s\" IS NULL" % (school_level, school_name, school_level))))
             border_attendance_areas = {}
@@ -312,24 +304,20 @@ for school_level in school_levels:
                     attendance_areas_to_update[attendance_area['PLAN_ID']] = school_name
                     null_attendance_areas.remove(attendance_area)
                     
+    # start applying queue of changes
     attendance_areas_layer.startEditing()
          
     for attendance_area in attendance_areas_layer.getFeatures():
         if attendance_area['PLAN_ID'] in list(attendance_areas_to_update.keys()):
             attendance_area[school_level] = attendance_areas_to_update[attendance_area['PLAN_ID']]
             attendance_areas_layer.updateFeature(attendance_area)
-             
+    
+    # commit changes         
     attendance_areas_layer.commitChanges()
     
-#     assigned_attendance_areas = {}
-#     for attendance_area in attendance_areas_layer.getFeatures():
-#         if attendance_area not in null_attendance_areas:
-#             plan_id = attendance_area['PLAN_ID']
-#             if plan_id in attendance_areas_to_update:
-#                 assigned_attendance_areas[attendance_area] = attendance_areas_to_update[plan_id]
-#             else:
-#                 assigned_attendance_areas[attendance_area] = attendance_area[school_level]
-#     
+    # ------------------------------------------------------------ rebalancing phase ----------------------------------------------
+    
+    # find all attendance areas still lacking a school assignment
     null_attendance_areas = [attendance_area for attendance_area in attendance_areas_layer.getFeatures(request=QgsFeatureRequest(QgsExpression("\"%s\" IS NULL" % (school_level))))]
     
     # iterate over unassigned districts
@@ -372,6 +360,7 @@ for school_level in school_levels:
     school_populations_prj = school_populations[school_level].copy()
     school_utilizations_prj = school_utilizations[school_level].copy()
      
+    # create dictionary of attendance areas to update with new assignments
     attendance_areas_to_update = {}
     attendance_areas_prj = {}
     for attendance_area in attendance_areas_layer.getFeatures():
@@ -507,13 +496,15 @@ for school_level in school_levels:
     for plan_id, school_name in manual_changes[school_level].iteritems():
         attendance_areas_to_update[plan_id] = school_name
     
+    # start applying changes
     attendance_areas_layer.startEditing()
          
     for attendance_area in attendance_areas_layer.getFeatures():
         if attendance_area['PLAN_ID'] in list(attendance_areas_to_update.keys()):
             attendance_area[school_level] = attendance_areas_to_update[attendance_area['PLAN_ID']]
             attendance_areas_layer.updateFeature(attendance_area)
-             
+    
+    # commit changes
     attendance_areas_layer.commitChanges()
      
     school_utilizations[school_level] = school_utilizations_prj
@@ -529,24 +520,16 @@ print '\n'
  
 print "iterations: %d" % (num_iterations)
  
-#current_avg_utilization = [sum([utilization for school_name, utilization in current_school_utilizations[school_level].iteritems()]) for school_level in school_levels]
-#avg_utilization = [sum([utilization for school_name, utilization in school_utilizations[school_level].iteritems()]) for school_level in school_levels]
+print 'school_name, current_school_population, new_school_population, school_capacity, current_school_utilization, new_school_utilization'
  
 for school_level in school_levels:
-    #index = school_levels.index(school_level)
-    #print "\n%d%% -> %d%% average utilization in %s school districts" % (current_avg_utilization[index] / [41, 20, 12][index], avg_utilization[index] / [41, 20, 12][index], school_level)
     for school_name, school_utilization in sorted(school_utilizations[school_level].iteritems(), key = lambda (k,v): (v,k), reverse = True):
-        #print "%d%% -> %d%% %s" % (current_school_utilizations[school_level][school_name], school_utilizations[school_level][school_name], school_name)
         print "%s, %d, %d, %d, %d, %d" % (school_name, current_school_populations[school_level][school_name], school_populations[school_level][school_name], school_capacities[school_level][school_name], current_school_utilizations[school_level][school_name], school_utilization)
-
-#_writer = QgsVectorFileWriter.writeAsVectorFormat(attendance_areas_layer, os.path.join(output_dir, 'attendance_areas.shp'), "utf-8", QgsCoordinateReferenceSystem('epsg:4326'))
-#_writer = QgsVectorFileWriter.writeAsVectorFormat(thiessen_layer, os.path.join(output_dir, 'attendance_areas_thiessen.shp'), "utf-8", QgsCoordinateReferenceSystem('epsg:4326'))
 
 # close QGIS application providers
 qgs.exitQgis()
 
 for school_level in school_levels:
-    #os.remove(os.path.join(output_dir, 'voronoi_%s_temp.shp' % (school_level)))
     os.remove(os.path.join(output_dir, 'schools.shp_Level_%s.shp' % (school_level)))
 
 print "done"
